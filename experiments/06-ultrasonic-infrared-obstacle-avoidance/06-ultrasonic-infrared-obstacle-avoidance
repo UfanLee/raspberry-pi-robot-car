@@ -1,0 +1,357 @@
+# Experiment 06 — Ultrasonic and Infrared Sensor Fusion Obstacle Avoidance
+
+## 1. Objective
+
+The objective of this experiment is to develop and test a sensor-fusion obstacle avoidance system for a Raspberry Pi-based four-wheel robot.
+
+The system combines:
+
+- Two infrared obstacle detection sensors
+- One ultrasonic distance sensor
+- A four-wheel motor control system
+
+The main goal is to use both sensor types to determine whether the robot should move forward, turn left, turn right, or stop.
+
+This experiment builds on the previous experiments involving basic motor control, infrared obstacle detection, and ultrasonic distance measurement.
+
+## 2. Hardware and Software
+
+### Hardware
+
+- Raspberry Pi
+- Four-wheel robot chassis
+- Motor driver board
+- Two infrared obstacle detection sensors
+- Ultrasonic distance sensor
+- Power supply and connecting wires
+
+### Software
+
+- Python 3
+- Jupyter Notebook
+- `RPi.GPIO`
+- `LOBOROBOT` motor control library
+
+## 3. GPIO Configuration
+
+The Raspberry Pi uses BCM GPIO numbering.
+
+| Component | GPIO Pin | Function |
+|---|---|---|
+| Left infrared sensor | GPIO 12 | Digital input |
+| Right infrared sensor | GPIO 16 | Digital input |
+| Ultrasonic TRIG | GPIO 20 | Trigger output |
+| Ultrasonic ECHO | GPIO 21 | Echo input |
+
+### Infrared Sensor States
+
+The infrared sensors use active-low obstacle detection.
+
+| Value | Meaning |
+|---|---|
+| 1 | No obstacle detected |
+| 0 | Obstacle detected |
+
+The ultrasonic sensor measures the distance to an object using the time difference between sending a trigger pulse and receiving an echo.
+
+## 4. Sensor Fusion Algorithm
+
+The robot uses a distance threshold of **40 cm**.
+
+The ultrasonic sensor has priority over the infrared sensors.
+
+If the measured distance is less than 40 cm, or the measurement is invalid, the robot stops.
+
+If the ultrasonic measurement is valid and the path is sufficiently clear, the infrared sensors determine the turning direction.
+
+### Decision Table
+
+| Ultrasonic Distance | Left IR | Right IR | Action |
+|---|---|---|---|
+| ≥ 40 cm | 1 | 1 | FORWARD |
+| ≥ 40 cm | 0 | 1 | TURN_RIGHT |
+| ≥ 40 cm | 1 | 0 | TURN_LEFT |
+| ≥ 40 cm | 0 | 0 | STOP |
+| Below 40 cm | Any | Any | STOP |
+| Invalid / None | Any | Any | STOP |
+
+### Decision Function
+
+```python
+def combined_decision(left, right, distance):
+    if distance is None or not (2 <= distance <= 400):
+        return "STOP"
+
+    if distance < 40:
+        return "STOP"
+
+    if left == 0 and right == 0:
+        return "STOP"
+
+    if left == 0:
+        return "TURN_RIGHT"
+
+    if right == 0:
+        return "TURN_LEFT"
+
+    return "FORWARD"
+```
+
+This design prioritizes obstacle avoidance and stops the robot when the ultrasonic measurement is unavailable.
+
+## 5. Ultrasonic Distance Measurement
+
+The distance is calculated using:
+
+\[
+\text{Distance (cm)} = \frac{\text{Echo duration (s)} \times 34300}{2}
+\]
+
+The value 34300 represents the approximate speed of sound in centimetres per second.
+
+A timeout is used to prevent the program from waiting indefinitely for an ultrasonic echo.
+
+An improved measurement function, `measure_distance_v2()`, was introduced to reject readings outside the configured valid range of 2–400 cm.
+
+This validation prevents extreme readings from being treated as valid obstacle distances, but it does not resolve the underlying cause of unreliable measurements.
+
+## 6. Experimental Procedure
+
+### 6.1 Sensor Fusion Logic Test
+
+Six simulated sensor combinations were used to test the decision function.
+
+The following cases were evaluated:
+
+1. Both infrared sensors clear, ultrasonic distance 60 cm
+2. Left infrared sensor blocked, ultrasonic distance 60 cm
+3. Right infrared sensor blocked, ultrasonic distance 60 cm
+4. Both infrared sensors blocked, ultrasonic distance 60 cm
+5. Both infrared sensors clear, ultrasonic distance 20 cm
+6. Both infrared sensors clear, ultrasonic measurement unavailable
+
+All six cases produced the expected decisions.
+
+**Result: Passed**
+
+### 6.2 Physical Infrared Sensor Test
+
+The infrared sensors were tested independently for 30 readings.
+
+| Sensor State | Observations |
+|---|---:|
+| CLEAR | 23 |
+| LEFT_BLOCKED | 6 |
+| RIGHT_BLOCKED | 1 |
+| BOTH_BLOCKED | 0 |
+
+Both left and right infrared sensors successfully detected obstacles.
+
+Simultaneous physical obstruction of both sensors was not observed during this test.
+
+**Result: Left and right sensor detection verified**
+
+### 6.3 Initial Integrated Sensor Test
+
+A 20-cycle physical sensor test was performed using both infrared and ultrasonic measurements.
+
+The system produced:
+
+- 19 STOP decisions
+- 1 FORWARD decision
+
+The ultrasonic sensor frequently measured distances below the 40 cm threshold or returned invalid readings.
+
+Infrared obstacles were detected, but the ultrasonic safety condition prevented turning.
+
+This demonstrated the intended priority of the ultrasonic stop condition.
+
+### 6.4 Ultrasonic Measurement Reliability Test
+
+An initial stationary ultrasonic test produced 20 measurements.
+
+Results:
+
+- Valid numeric readings: 11/20
+- Timeouts: 9/20
+- Timeout rate: 45%
+- Numeric readings clustered around 509 cm
+
+The readings near 509 cm were considered suspicious because they were close to the distance corresponding to the configured 30 ms echo timeout.
+
+An improved distance measurement function was then tested.
+
+In a subsequent 20-reading stationary test, the sensor produced readings between 13.2 cm and 13.4 cm.
+
+Results:
+
+- Valid readings: 20/20
+- Timeouts: 0/20
+- Approximate mean: 13.29 cm
+- Observed range: 13.2–13.4 cm
+
+The second test demonstrated good measurement repeatability under that particular test condition.
+
+However, the actual target distance was not independently confirmed, so absolute measurement accuracy was not established.
+
+### 6.5 Integrated Motor Control Test
+
+The improved ultrasonic measurement function was used in a 30-cycle integrated motor test.
+
+Results:
+
+| Result | Count |
+|---|---:|
+| FORWARD | 4 |
+| STOP | 26 |
+| TURN_LEFT | 0 |
+| TURN_RIGHT | 0 |
+| Invalid ultrasonic measurements | 22 |
+
+The ultrasonic sensor returned `None` in approximately 73.3% of the measurements.
+
+Consequently, the robot frequently selected STOP.
+
+The integrated program completed without a Python exception, but the physical sensor conditions did not trigger either turning action.
+
+**Result: Program execution completed; reliable real-time turning was not demonstrated**
+
+### 6.6 Simulated Sensor Input and Physical Motor Verification
+
+To isolate motor functionality from unreliable ultrasonic readings, six simulated sensor input cases were tested.
+
+The program generated the expected actions:
+
+```text
+Testing FORWARD: FORWARD
+Motor stopped.
+Testing TURN_RIGHT: TURN_RIGHT
+Motor stopped.
+Testing TURN_LEFT: TURN_LEFT
+Motor stopped.
+Testing STOP_BOTH_IR: STOP
+Motor stopped.
+Testing STOP_ULTRASONIC: STOP
+Motor stopped.
+Testing STOP_TIMEOUT: STOP
+Motor stopped.
+Motor direction test completed.
+```
+
+The robot was tested with its wheels raised.
+
+Physical observation confirmed that:
+
+- Forward motor movement worked correctly.
+- Right turning worked correctly.
+- Left turning worked correctly.
+- The motors stopped correctly.
+
+**Result: Passed — motor directions and stopping physically verified using simulated sensor inputs**
+
+These tests verified the motor execution layer independently of live sensor reliability.
+
+## 7. Problems Encountered
+
+### Problem 1 — Undefined Measurement Function
+
+The integrated notebook initially raised:
+
+```text
+NameError: name 'measure_distance_v2' is not defined
+```
+
+**Cause:** The measurement function had not been defined in the active Jupyter kernel.
+
+**Solution:** Define the function before executing the integrated control program.
+
+### Problem 2 — GPIO Initialization After Cleanup
+
+The `GPIO.cleanup()` function resets GPIO configurations.
+
+Motor control and sensor functions may fail if the same robot object is reused without reinitialization.
+
+**Solution:** Reinitialize the `LOBOROBOT` motor controller and configure the GPIO pins before each new test.
+
+### Problem 3 — Unreliable Ultrasonic Readings
+
+The ultrasonic sensor intermittently returned:
+
+- `None`
+- Values near 509 cm
+- Short distances that caused the robot to stop
+
+The improved measurement function rejected values outside the configured range, but the integrated system still experienced frequent invalid readings.
+
+The underlying cause was not conclusively identified.
+
+Possible areas for further investigation include electrical noise, power supply stability, sensor wiring, echo signal timing, and sensor placement.
+
+### Problem 4 — Turning Actions Blocked by Safety Logic
+
+The ultrasonic sensor has higher priority than the infrared sensors.
+
+Therefore, when an infrared obstacle was detected together with a short or invalid ultrasonic reading, the system selected STOP instead of turning.
+
+This behavior was consistent with the programmed decision rules.
+
+To verify motor turning independently, simulated sensor inputs were used.
+
+## 8. Safety Measures
+
+The following precautions were incorporated into testing:
+
+- Motors were tested with the wheels raised.
+- Low motor speeds were used.
+- Individual motor actions were limited to short durations.
+- A stop command was issued after each movement.
+- The robot stopped when ultrasonic measurements were invalid.
+- GPIO resources were cleaned up at the end of testing.
+
+For a bare HC-SR04 sensor, the 5V ECHO signal must be safely level-shifted before connecting it to a Raspberry Pi GPIO input, unless the robot's interface board already provides appropriate signal conditioning.
+
+## 9. Results Summary
+
+| Test | Result |
+|---|---|
+| Infrared sensor detection | Passed |
+| Sensor fusion decision logic | Passed |
+| Six simulated decision cases | Passed |
+| Physical forward movement | Passed |
+| Physical right turn | Passed |
+| Physical left turn | Passed |
+| Physical motor stop | Passed |
+| Stationary ultrasonic repeatability | Passed in one test condition |
+| Ultrasonic reliability during integrated operation | Not yet satisfactory |
+| Real-time sensor-driven turning | Not yet verified |
+| Autonomous ground navigation | Not tested |
+
+## 10. Limitations and Future Improvements
+
+The current implementation uses a rule-based sensor fusion strategy.
+
+It can select the correct motor action from valid sensor inputs, and the motor controller has been physically verified.
+
+However, reliable autonomous obstacle avoidance has not yet been demonstrated.
+
+Future improvements include:
+
+1. Investigating ultrasonic sensor wiring, timing, and power stability.
+2. Comparing ultrasonic readings before, during, and after motor operation.
+3. Using a more reliable pulse-timing method if necessary.
+4. Validating ultrasonic distance accuracy against measured reference distances.
+5. Adding filtering and measurement confidence checks.
+6. Repeating live sensor-driven left and right turning tests.
+7. Performing controlled, low-speed ground tests after sensor reliability improves.
+
+## 11. Conclusion
+
+Experiment 06 successfully implemented a rule-based sensor fusion control system using ultrasonic and infrared obstacle detection.
+
+The infrared sensors were physically tested, all six decision cases passed, and forward, left-turn, right-turn, and stop motor actions were physically verified using simulated sensor inputs.
+
+The experiment also identified a significant limitation: ultrasonic distance measurements were unreliable during integrated operation, frequently causing the robot to stop.
+
+Therefore, the core decision and motor execution modules have been validated, while reliable real-time autonomous obstacle avoidance remains future work.
+
+This experiment provides a foundation for improving the robot's perception reliability and developing more advanced autonomous navigation capabilities.
